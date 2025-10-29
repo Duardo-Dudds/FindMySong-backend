@@ -38,7 +38,7 @@ app.get("/health", async (req, res) => {
 });
 
 // --- ROTAS USUÁRIOS ---
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 // criar usuário
