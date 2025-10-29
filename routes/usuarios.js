@@ -39,13 +39,17 @@ router.post("/login", async (req, res) => {
 
   try {
     const resultado = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
-    if (resultado.rows.length === 0) {
+    const usuario = resultado.rows[0];
+
+    if (!usuario) {
       return res.status(400).json({ message: "Usuário não encontrado." });
     }
 
-    const usuario = resultado.rows[0];
-    const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
+    if (!usuario.senha) {
+      return res.status(400).json({ message: "Usuário com senha inválida." });
+    }
 
+    const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
     if (!senhaCorreta) {
       return res.status(401).json({ message: "Senha incorreta." });
     }
@@ -62,5 +66,6 @@ router.post("/login", async (req, res) => {
     res.status(500).json({ message: "Erro no servidor." });
   }
 });
+
 
 module.exports = router;

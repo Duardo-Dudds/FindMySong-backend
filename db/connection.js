@@ -2,15 +2,15 @@ const { Pool } = require("pg");
 require("dotenv").config();
 
 const pool = new Pool({
-  user: process.env.PGUSER,
-  host: process.env.PGHOST,
-  database: process.env.PGDATABASE,
-  password: process.env.PGPASSWORD,
-  port: process.env.PGPORT || 5432,
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
 });
 
 pool.connect()
-  .then(() => console.log("🟢 Conectado ao PostgreSQL"))
+  .then(() => {
+    console.log("🟢 Conectado ao PostgreSQL Render");
+    pool.query('SET search_path TO eduardo, public;');
+  })
   .catch(err => console.error("🔴 Erro ao conectar ao banco:", err));
 
 module.exports = pool;
