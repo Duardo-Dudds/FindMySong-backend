@@ -2,29 +2,32 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const path = require("path");
-
 const app = express();
 
-// Log simples para ver requisições chegando
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  next();
-});
-
-
-// CORS – ajuste depois com o domínio da Vercel
+// CORS
 app.use(
   cors({
     origin: [
       "http://localhost:5173",
       "https://find-my-song.vercel.app",
       "https://find-my-song-frontend.vercel.app",
+      "https://findmysong-frontend.vercel.app"
     ],
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
 
+// Garante que o body venha em JSON
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Log simples para ver requisições chegando
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
 
 // DB
 const { Pool } = require("pg");
