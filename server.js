@@ -6,6 +6,13 @@ const path = require("path");
 
 const app = express();
 
+// Log simples para ver requisições chegando
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
+
 // CORS – ajuste depois com o domínio da Vercel
 app.use(
   cors({
@@ -62,25 +69,42 @@ app.post("/api/usuarios/register", async (req, res) => {
 // login
 app.post("/api/usuarios/login", async (req, res) => {
   const { email, senha } = req.body;
-  if (!email || !senha) return res.status(400).json({ message: "Preencha email e senha" });
+  if (!email || !senha)
+    return res.status(400).json({ message: "Preencha email e senha" });
 
   try {
-    const r = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
+    const r = await pool.query(
+      "SELECT * FROM usuarios WHERE LOWER(email) = LOWER($1)",
+      [email]
+    );
+
+    if (r.rows.length === 0) {
+      console.log("[LOGIN] Email não encontrado:", email);
+      return res.status(404).json({ message: "Usuário não encontrado." });
+    }
+
     const user = r.rows[0];
-    if (!user) return res.status(401).json({ message: "Credenciais inválidas" });
 
-    const ok = await bcrypt.compare(senha, user.senha);
-    if (!ok) return res.status(401).json({ message: "Credenciais inválidas" });
+    const senhaCorreta = await bcrypt.compare(senha, user.senha);
+    if (!senhaCorreta) {
+      console.log("[LOGIN] Senha incorreta para:", email);
+      return res.status(401).json({ message: "Senha incorreta." });
+    }
 
-    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
-      expiresIn: "7d",
-    });
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    console.log("[LOGIN] Login bem-sucedido:", email);
     res.json({ message: "Login bem-sucedido!", token });
   } catch (err) {
-    console.error("Erro no login:", err);
-    res.status(500).json({ message: "Erro no servidor" });
+    console.error("[LOGIN] Erro no servidor:", err);
+    res.status(500).json({ message: "Erro no servidor." });
   }
 });
+
 
 // rota protegida simples
 app.get("/api/usuarios/me", async (req, res) => {
