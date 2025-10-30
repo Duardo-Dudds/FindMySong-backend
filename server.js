@@ -18,12 +18,13 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://SEU-APP.vercel.app" // troque depois pelo seu domínio real
+      "https://find-my-song.vercel.app",
+      "https://find-my-song-frontend.vercel.app",
     ],
+    credentials: true,
   })
 );
 
-app.use(express.json());
 
 // DB
 const { Pool } = require("pg");
