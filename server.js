@@ -66,45 +66,53 @@ app.post("/api/usuarios/register", async (req, res) => {
   }
 });
 
-// login
+// LOGIN 
 app.post("/api/usuarios/login", async (req, res) => {
   const { email, senha } = req.body;
-  if (!email || !senha)
+
+  if (!email || !senha) {
     return res.status(400).json({ message: "Preencha email e senha" });
+  }
 
   try {
+    console.log(`[LOGIN] Tentando login: ${email}`);
+
+    // Busca o usuário no banco (case-insensitive)
     const r = await pool.query(
       "SELECT * FROM usuarios WHERE LOWER(email) = LOWER($1)",
       [email]
     );
 
+    // Se não existir, para aqui
     if (r.rows.length === 0) {
-      console.log("[LOGIN] Email não encontrado:", email);
-      return res.status(404).json({ message: "Usuário não encontrado." });
+      console.log(`[LOGIN] Usuário não encontrado: ${email}`);
+      return res.status(401).json({ message: "Usuário não encontrado" });
     }
 
     const user = r.rows[0];
 
+    // Compara a senha
     const senhaCorreta = await bcrypt.compare(senha, user.senha);
+
     if (!senhaCorreta) {
-      console.log("[LOGIN] Senha incorreta para:", email);
-      return res.status(401).json({ message: "Senha incorreta." });
+      console.log(`[LOGIN] Senha incorreta para: ${email}`);
+      return res.status(401).json({ message: "Senha incorreta" });
     }
 
+    // Gera token somente se tudo der certo
     const token = jwt.sign(
       { id: user.id, email: user.email },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || "segredo123",
       { expiresIn: "7d" }
     );
 
-    console.log("[LOGIN] Login bem-sucedido:", email);
+    console.log(`[LOGIN] Login bem-sucedido: ${email}`);
     res.json({ message: "Login bem-sucedido!", token });
   } catch (err) {
-    console.error("[LOGIN] Erro no servidor:", err);
+    console.error("[LOGIN] Erro inesperado:", err);
     res.status(500).json({ message: "Erro no servidor." });
   }
 });
-
 
 // rota protegida simples
 app.get("/api/usuarios/me", async (req, res) => {
