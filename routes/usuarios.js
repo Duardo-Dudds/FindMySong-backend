@@ -37,16 +37,28 @@ router.post("/register", async (req, res) => {
 router.post("/login", async (req, res) => {
   const { email, senha } = req.body;
 
-  try {
-    const resultado = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
-    const usuario = resultado.rows[0];
+  // Verifica se veio email e senha
+  if (!email || !senha) {
+    return res.status(400).json({ message: "Preencha todos os campos." });
+  }
 
-    if (!usuario) {
-      return res.status(400).json({ message: "Usuário não encontrado." });
+  try {
+    // Busca usuário (sem case-sensitive)
+    const resultado = await pool.query(
+      "SELECT * FROM usuarios WHERE LOWER(email) = LOWER($1)",
+      [email]
+    );
+
+    // Se não existir no banco
+    if (resultado.rows.length === 0) {
+      return res.status(404).json({ message: "Usuário não encontrado." });
     }
 
+    const usuario = resultado.rows[0];
+
+    // Verifica se a senha existe e confere
     if (!usuario.senha) {
-      return res.status(400).json({ message: "Usuário com senha inválida." });
+      return res.status(400).json({ message: "Senha inválida no cadastro." });
     }
 
     const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
@@ -54,16 +66,21 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ message: "Senha incorreta." });
     }
 
+    // Gera token
     const token = jwt.sign(
       { id: usuario.id, email: usuario.email },
       process.env.JWT_SECRET || "segredo123",
       { expiresIn: "7d" }
     );
 
-    res.json({ message: "Login bem-sucedido!", token });
+    res.status(200).json({
+      message: "Login bem-sucedido!",
+      usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email },
+      token,
+    });
   } catch (err) {
     console.error("Erro no login:", err);
-    res.status(500).json({ message: "Erro no servidor." });
+    res.status(500).json({ message: "Erro interno no servidor." });
   }
 });
 
