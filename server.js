@@ -1,11 +1,11 @@
-// ========================================
-//  Configurações principais e variáveis
-// ========================================
-
-// Carrega variáveis de ambiente (.env)
+// ===============================
+// Carrega variáveis de ambiente
+// ===============================
 require("dotenv").config();
 
-// Dependências principais
+// ===============================
+// Imports
+// ===============================
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
@@ -13,12 +13,14 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
 
+// ===============================
+// App
+// ===============================
 const app = express();
 
-// ========================================
-//  Configuração de CORS
-// ========================================
-// Permitindo acesso apenas do meu front hospedado (Vercel) e localhost para testes
+// ===============================
+// CORS – deixa só seus domínios
+// ===============================
 app.use(
   cors({
     origin: [
@@ -33,25 +35,25 @@ app.use(
   })
 );
 
-// Garante que o corpo das requisições venha em JSON
+// aceita JSON
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Log simples pra saber o que o servidor está recebendo
+// log simples
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// ========================================
-//  Banco de Dados (PostgreSQL - Render)
-// ========================================
+// ===============================
+// Banco (Render Postgres)
+// ===============================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { require: true, rejectUnauthorized: false },
 });
 
-// Teste rápido pra saber se o backend está vivo
+// health
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -61,49 +63,63 @@ app.get("/health", async (req, res) => {
   }
 });
 
-// ========================================
-//  Rotas de Usuário (cadastro / login)
-// ========================================
+// ===============================
+// Auth (cadastro / login)
+// ===============================
 
-// Cadastro de usuário
+// POST /api/usuarios/register
 app.post("/api/usuarios/register", async (req, res) => {
   const { nome, email, senha } = req.body;
 
-  if (!nome || !email || !senha)
+  if (!nome || !email || !senha) {
     return res.status(400).json({ message: "Preencha todos os campos." });
+  }
 
   try {
     const senhaHash = await bcrypt.hash(senha, 10);
+
     const result = await pool.query(
       "INSERT INTO usuarios (nome, email, senha) VALUES ($1,$2,$3) RETURNING id, nome, email",
       [nome, email, senhaHash]
     );
-    res.status(201).json({ message: "Usuário criado com sucesso!", usuario: result.rows[0] });
+
+    return res
+      .status(201)
+      .json({ message: "Usuário criado com sucesso!", usuario: result.rows[0] });
   } catch (err) {
     console.error("Erro ao criar usuário:", err);
-    res.status(500).json({ message: "Erro no servidor." });
+    return res.status(500).json({ message: "Erro no servidor." });
   }
 });
 
-// Login do usuário
+// POST /api/usuarios/login
 app.post("/api/usuarios/login", async (req, res) => {
   const { email, senha } = req.body;
 
-  if (!email || !senha)
+  if (!email || !senha) {
     return res.status(400).json({ message: "Preencha email e senha." });
+  }
 
   try {
     console.log(`[LOGIN] Tentando login: ${email}`);
 
-    const result = await pool.query("SELECT * FROM usuarios WHERE LOWER(email)=LOWER($1)", [email]);
-    if (result.rows.length === 0)
+    const result = await pool.query(
+      "SELECT * FROM usuarios WHERE LOWER(email) = LOWER($1)",
+      [email]
+    );
+
+    if (result.rows.length === 0) {
+      console.log(`[LOGIN] Usuário não encontrado: ${email}`);
       return res.status(401).json({ message: "Usuário não encontrado." });
+    }
 
     const user = result.rows[0];
-    const senhaCorreta = await bcrypt.compare(senha, user.senha);
 
-    if (!senhaCorreta)
+    const senhaCorreta = await bcrypt.compare(senha, user.senha);
+    if (!senhaCorreta) {
+      console.log(`[LOGIN] Senha incorreta para ${email}`);
       return res.status(401).json({ message: "Senha incorreta." });
+    }
 
     const token = jwt.sign(
       { id: user.id, email: user.email },
@@ -112,159 +128,187 @@ app.post("/api/usuarios/login", async (req, res) => {
     );
 
     console.log(`[LOGIN] Login bem-sucedido: ${email}`);
-    res.json({ message: "Login bem-sucedido!", token });
+    return res.json({ message: "Login bem-sucedido!", token });
   } catch (err) {
     console.error("[LOGIN] Erro inesperado:", err);
-    res.status(500).json({ message: "Erro no servidor." });
+    return res.status(500).json({ message: "Erro no servidor." });
   }
 });
 
-// Rota protegida básica
+// rota protegida
 app.get("/api/usuarios/me", async (req, res) => {
   try {
     const auth = req.headers.authorization || "";
     const token = auth.replace("Bearer ", "");
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    const result = await pool.query("SELECT id, nome, email FROM usuarios WHERE id = $1", [payload.id]);
-    res.json(result.rows[0]);
+
+    const result = await pool.query(
+      "SELECT id, nome, email FROM usuarios WHERE id = $1",
+      [payload.id]
+    );
+
+    return res.json(result.rows[0]);
   } catch {
-    res.status(401).json({ message: "Não autorizado." });
+    return res.status(401).json({ message: "Não autorizado." });
   }
 });
 
-// ========================================
-//  Integração com Spotify API
-// ========================================
-let cachedToken = null;
-let tokenExpiresAt = 0;
+// ===============================
+// Spotify – com cache
+// ===============================
+let cachedSpotifyToken = null;
+let spotifyExpiresAt = 0;
 
 async function getSpotifyToken() {
-  try {
-    const now = Date.now();
-    if (cachedToken && now < tokenExpiresAt - 5000) return cachedToken;
-
-    const clientId = process.env.SPOTIFY_CLIENT_ID;
-    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-
-    if (!clientId || !clientSecret)
-      throw new Error("Spotify Client ID ou Secret não configurados.");
-
-    const authHeader = "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-
-    const resp = await axios.post(
-      "https://accounts.spotify.com/api/token",
-      new URLSearchParams({ grant_type: "client_credentials" }).toString(),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: authHeader } }
-    );
-
-    if (!resp.data?.access_token)
-      throw new Error("Erro ao gerar token do Spotify.");
-
-    cachedToken = resp.data.access_token;
-    tokenExpiresAt = now + resp.data.expires_in * 1000;
-
-    console.log(`[SPOTIFY] Token gerado. Expira em ${resp.data.expires_in}s.`);
-    return cachedToken;
-  } catch (err) {
-    console.error("[SPOTIFY] Erro:", err.response?.data || err.message);
-    throw err;
+  const now = Date.now();
+  if (cachedSpotifyToken && now < spotifyExpiresAt - 5000) {
+    return cachedSpotifyToken;
   }
+
+  const clientId = process.env.SPOTIFY_CLIENT_ID;
+  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("SPOTIFY_CLIENT_ID / SECRET não configurados");
+  }
+
+  const authHeader =
+    "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
+  const resp = await axios.post(
+    "https://accounts.spotify.com/api/token",
+    new URLSearchParams({ grant_type: "client_credentials" }).toString(),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: authHeader,
+      },
+      timeout: 8000,
+    }
+  );
+
+  if (!resp.data?.access_token) {
+    throw new Error("Spotify não devolveu token");
+  }
+
+  cachedSpotifyToken = resp.data.access_token;
+  spotifyExpiresAt = now + resp.data.expires_in * 1000;
+
+  console.log("[SPOTIFY] Token gerado. Expira em", resp.data.expires_in, "s");
+  return cachedSpotifyToken;
 }
 
-// Busca direta no Spotify
+// GET /api/spotify/search?q=...
 app.get("/api/spotify/search", async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
     if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório." });
 
     const token = await getSpotifyToken();
+
     const r = await axios.get("https://api.spotify.com/v1/search", {
       headers: { Authorization: `Bearer ${token}` },
       params: { q, type: "track", limit: 20 },
+      timeout: 8000,
     });
 
-    res.json(r.data.tracks.items);
+    return res.json(r.data.tracks.items);
   } catch (err) {
     console.error("[SPOTIFY] Erro na busca:", err.response?.data || err.message);
-    res.status(500).json({ message: "Erro na busca Spotify." });
+    return res.status(500).json({ message: "Erro na busca Spotify." });
   }
 });
 
-// ========================================
-//  Integração com Genius API
-// ========================================
+// ===============================
+// Genius + Spotify – busca por letra
+// ===============================
 const GENIUS_ACCESS_TOKEN = process.env.GENIUS_ACCESS_TOKEN;
 const GENIUS_BASE_URL = "https://api.genius.com";
 
-// Busca letras no Genius + complementa com dados do Spotify
+// GET /api/search-lyrics?q=...
 app.get("/api/search-lyrics", async (req, res) => {
+  const q = String(req.query.q || "").trim();
+
+  if (!q) {
+    return res.status(400).json({ message: "Parâmetro q é obrigatório." });
+  }
+
+  if (!GENIUS_ACCESS_TOKEN) {
+    console.error("[GENIUS] token não configurado");
+    return res.status(500).json({ message: "Chave do Genius não configurada." });
+  }
+
   try {
-    const q = String(req.query.q || "").trim();
-    if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório." });
-
-    if (!GENIUS_ACCESS_TOKEN)
-      return res.status(500).json({ message: "Chave Genius não configurada." });
-
-    // Busca no Genius
-    const geniusRes = await axios.get(`${GENIUS_BASE_URL}/search`, {
-      params: { q },
+    // 1) busca no Genius (forçando o termo de letra)
+    const geniusResp = await axios.get(`${GENIUS_BASE_URL}/search`, {
+      params: { q: `${q} lyrics` },
       headers: { Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}` },
+      timeout: 7000, // não deixa o Render ficar esperando pra sempre
     });
 
-    const hits = geniusRes.data.response.hits.slice(0, 8);
+    const hits = (geniusResp.data.response?.hits || []).slice(0, 6);
+
     const results = [];
 
-    // Para cada resultado do Genius, tenta achar no Spotify
+    // 2) pra cada resultado do Genius, tenta achar no Spotify
     for (const hit of hits) {
       const song = hit.result;
       const title = song.title;
       const artist = song.primary_artist?.name;
+      const geniusUrl = song.url;
+
+      // obj base (se o Spotify falhar, pelo menos isso volta)
+      const base = {
+        title,
+        artist,
+        genius_url: geniusUrl,
+        spotify_url: null,
+        preview_url: null,
+        image: null,
+      };
 
       try {
         const spToken = await getSpotifyToken();
-        const spRes = await axios.get("https://api.spotify.com/v1/search", {
+        const spResp = await axios.get("https://api.spotify.com/v1/search", {
           headers: { Authorization: `Bearer ${spToken}` },
           params: { q: `${title} ${artist}`, type: "track", limit: 1 },
+          timeout: 5000,
         });
 
-        const track = spRes.data.tracks.items[0];
+        const track = spResp.data.tracks.items[0];
 
         results.push({
-          title,
-          artist,
-          genius_url: song.url,
+          ...base,
           spotify_url: track?.external_urls?.spotify || null,
           preview_url: track?.preview_url || null,
           image: track?.album?.images?.[0]?.url || null,
         });
-      } catch {
-        results.push({
-          title,
-          artist,
-          genius_url: song.url,
-          spotify_url: null,
-          preview_url: null,
-          image: null,
-        });
+      } catch (err) {
+        // se o Spotify falhar, adiciona mesmo assim
+        console.warn("[GENIUS->SPOTIFY] Falhou pra", title, err.message);
+        results.push(base);
       }
     }
 
-    res.json(results);
+    return res.json(results);
   } catch (err) {
-    console.error("[GENIUS] Erro na busca:", err.response?.data || err.message);
-    res.status(500).json({ message: "Erro na busca de letras." });
+    console.error("[GENIUS] erro search-lyrics:", err.response?.data || err.message);
+    // aqui é onde dava 502 — agora devolve algo
+    return res.status(200).json([]);
   }
 });
 
-// ========================================
-// Inicialização do servidor
-// ========================================
-const port = process.env.PORT || 3000;
-
+// ===============================
+// Rota raiz
+// ===============================
 app.get("/", (req, res) => {
-  res.send("FindMySong Backend está rodando 🎵");
+  res.send("FindMySong backend rodando 🎵");
 });
 
+// ===============================
+// Sobe servidor
+// ===============================
+const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`🚀 Servidor rodando na porta ${port}`);
 });
