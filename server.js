@@ -257,9 +257,14 @@ app.get("/api/search-lyrics", async (req, res) => {
 });
 
 // ========================================
-//  Inicialização do servidor
+// Inicialização do servidor
 // ========================================
 const port = process.env.PORT || 3000;
+
+app.get("/", (req, res) => {
+  res.send("FindMySong Backend está rodando 🎵");
+});
+
 app.listen(port, () => {
-  console.log(`🚀 Backend rodando em http://localhost:${port}`);
+  console.log(`🚀 Servidor rodando na porta ${port}`);
 });
