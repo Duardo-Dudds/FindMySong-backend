@@ -136,52 +136,74 @@ app.get("/api/usuarios/me", async (req, res) => {
 
 // --- ROTAS SPOTIFY (token automático no backend) ---
 const axios = require("axios");
+
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
 async function getSpotifyToken() {
-  const now = Date.now();
-  if (cachedToken && now < tokenExpiresAt) return cachedToken;
+  try {
+    const now = Date.now();
+    if (cachedToken && now < tokenExpiresAt - 5000) return cachedToken; // 5s de folga
 
-  const clientId = process.env.SPOTIFY_CLIENT_ID;
-  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+    const clientId = process.env.SPOTIFY_CLIENT_ID;
+    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
 
-  const resp = await axios.post(
-    "https://accounts.spotify.com/api/token",
-    new URLSearchParams({ grant_type: "client_credentials" }).toString(),
-    {
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64"),
-      },
+    if (!clientId || !clientSecret) {
+      console.error("[SPOTIFY] SPOTIFY_CLIENT_ID / SECRET não configurados!");
+      throw new Error("Spotify credentials missing");
     }
-  );
 
-  cachedToken = resp.data.access_token;
-  tokenExpiresAt = now + (resp.data.expires_in - 60) * 1000;
-  return cachedToken;
+    const authHeader = "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
+    const resp = await axios.post(
+      "https://accounts.spotify.com/api/token",
+      new URLSearchParams({ grant_type: "client_credentials" }).toString(),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: authHeader,
+        },
+        timeout: 8000,
+      }
+    );
+
+    if (resp.status !== 200 || !resp.data?.access_token) {
+      console.error("[SPOTIFY] Token endpoint respondeu mal:", resp.status, resp.data);
+      throw new Error("Token inválido");
+    }
+
+    cachedToken = resp.data.access_token;
+    tokenExpiresAt = now + (resp.data.expires_in || 3600) * 1000;
+    console.log("[SPOTIFY] Token obtido, expira em", resp.data.expires_in, "s");
+    return cachedToken;
+  } catch (err) {
+    console.error("[SPOTIFY] Erro ao gerar token do Spotify:", err.response?.data || err.message || err);
+    throw err;
+  }
 }
 
 // GET /api/spotify/search?q=love
 app.get("/api/spotify/search", async (req, res) => {
   try {
-    const q = req.query.q;
+    const q = String(req.query.q || "").trim();
     if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório" });
 
     const token = await getSpotifyToken();
+
     const r = await axios.get("https://api.spotify.com/v1/search", {
       headers: { Authorization: `Bearer ${token}` },
       params: { q, type: "track", limit: 20 },
+      timeout: 8000,
     });
 
-    res.json(r.data.tracks.items);
+    return res.json(r.data.tracks.items);
   } catch (err) {
-    console.error("Erro Spotify:", err.response?.data || err.message);
-    res.status(500).json({ message: "Erro Spotify" });
+    console.error("Erro Spotify search:", err.response?.data || err.message);
+    // se for erro de token, devolve 502 para o frontend entender
+    if (err.response && err.response.status === 401) {
+      return res.status(502).json({ message: "Erro no token do Spotify" });
+    }
+    return res.status(500).json({ message: "Erro Spotify" });
   }
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`🚀 Backend rodando em http://localhost:${port}`);
-});
