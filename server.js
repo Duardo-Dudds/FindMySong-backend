@@ -19,7 +19,7 @@ const { Pool } = require("pg");
 const app = express();
 
 // ===============================
-// CORS – deixa só seus domínios
+// CORS – apenas domínios autorizados
 // ===============================
 app.use(
   cors({
@@ -35,25 +35,27 @@ app.use(
   })
 );
 
-// aceita JSON
+// ===============================
+// Configuração base
+// ===============================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// log simples
+// Log básico das requisições
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
 // ===============================
-// Banco (Render Postgres)
+// Banco de Dados (Render PostgreSQL)
 // ===============================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { require: true, rejectUnauthorized: false },
 });
 
-// health
+// Teste de saúde do servidor
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -64,10 +66,10 @@ app.get("/health", async (req, res) => {
 });
 
 // ===============================
-// Auth (cadastro / login)
+// Autenticação (cadastro / login)
 // ===============================
 
-// POST /api/usuarios/register
+// POST /api/usuarios/register – cria novo usuário
 app.post("/api/usuarios/register", async (req, res) => {
   const { nome, email, senha } = req.body;
 
@@ -92,7 +94,7 @@ app.post("/api/usuarios/register", async (req, res) => {
   }
 });
 
-// POST /api/usuarios/login
+// POST /api/usuarios/login – autenticação de usuário
 app.post("/api/usuarios/login", async (req, res) => {
   const { email, senha } = req.body;
 
@@ -114,7 +116,6 @@ app.post("/api/usuarios/login", async (req, res) => {
     }
 
     const user = result.rows[0];
-
     const senhaCorreta = await bcrypt.compare(senha, user.senha);
     if (!senhaCorreta) {
       console.log(`[LOGIN] Senha incorreta para ${email}`);
@@ -135,7 +136,7 @@ app.post("/api/usuarios/login", async (req, res) => {
   }
 });
 
-// rota protegida
+// GET /api/usuarios/me – rota protegida
 app.get("/api/usuarios/me", async (req, res) => {
   try {
     const auth = req.headers.authorization || "";
@@ -154,7 +155,7 @@ app.get("/api/usuarios/me", async (req, res) => {
 });
 
 // ===============================
-// Spotify – com cache
+// Spotify API – token com cache
 // ===============================
 let cachedSpotifyToken = null;
 let spotifyExpiresAt = 0;
@@ -220,7 +221,7 @@ app.get("/api/spotify/search", async (req, res) => {
 });
 
 // ===============================
-// Genius + Spotify – busca por letra
+// Genius + Spotify – busca por letra otimizada
 // ===============================
 const GENIUS_ACCESS_TOKEN = process.env.GENIUS_ACCESS_TOKEN;
 const GENIUS_BASE_URL = "https://api.genius.com";
@@ -229,39 +230,32 @@ const GENIUS_BASE_URL = "https://api.genius.com";
 app.get("/api/search-lyrics", async (req, res) => {
   const q = String(req.query.q || "").trim();
 
-  if (!q) {
-    return res.status(400).json({ message: "Parâmetro q é obrigatório." });
-  }
-
-  if (!GENIUS_ACCESS_TOKEN) {
-    console.error("[GENIUS] token não configurado");
+  if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório." });
+  if (!GENIUS_ACCESS_TOKEN)
     return res.status(500).json({ message: "Chave do Genius não configurada." });
-  }
 
   try {
-    // 1) busca no Genius (forçando o termo de letra)
+    // Busca inicial no Genius
     const geniusResp = await axios.get(`${GENIUS_BASE_URL}/search`, {
       params: { q: `${q} lyrics` },
       headers: { Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}` },
-      timeout: 7000, // não deixa o Render ficar esperando pra sempre
+      timeout: 8000,
     });
 
-    const hits = (geniusResp.data.response?.hits || []).slice(0, 6);
-
+    // Aumenta número de resultados e melhora relevância
+    const hits = (geniusResp.data.response?.hits || []).slice(0, 15);
     const results = [];
 
-    // 2) pra cada resultado do Genius, tenta achar no Spotify
+    // Para cada música do Genius, tenta casar com dados do Spotify
     for (const hit of hits) {
       const song = hit.result;
       const title = song.title;
       const artist = song.primary_artist?.name;
-      const geniusUrl = song.url;
 
-      // obj base (se o Spotify falhar, pelo menos isso volta)
       const base = {
         title,
         artist,
-        genius_url: geniusUrl,
+        genius_url: song.url,
         spotify_url: null,
         preview_url: null,
         image: null,
@@ -271,8 +265,12 @@ app.get("/api/search-lyrics", async (req, res) => {
         const spToken = await getSpotifyToken();
         const spResp = await axios.get("https://api.spotify.com/v1/search", {
           headers: { Authorization: `Bearer ${spToken}` },
-          params: { q: `${title} ${artist}`, type: "track", limit: 1 },
-          timeout: 5000,
+          params: {
+            q: `${title} ${artist}`.replace(/[()]/g, ""),
+            type: "track",
+            limit: 3,
+          },
+          timeout: 7000,
         });
 
         const track = spResp.data.tracks.items[0];
@@ -284,7 +282,6 @@ app.get("/api/search-lyrics", async (req, res) => {
           image: track?.album?.images?.[0]?.url || null,
         });
       } catch (err) {
-        // se o Spotify falhar, adiciona mesmo assim
         console.warn("[GENIUS->SPOTIFY] Falhou pra", title, err.message);
         results.push(base);
       }
@@ -293,7 +290,6 @@ app.get("/api/search-lyrics", async (req, res) => {
     return res.json(results);
   } catch (err) {
     console.error("[GENIUS] erro search-lyrics:", err.response?.data || err.message);
-    // aqui é onde dava 502 — agora devolve algo
     return res.status(200).json([]);
   }
 });
@@ -306,7 +302,7 @@ app.get("/", (req, res) => {
 });
 
 // ===============================
-// Sobe servidor
+// Inicializa servidor
 // ===============================
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
