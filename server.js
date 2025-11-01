@@ -25,13 +25,14 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://find-my-song.vercel.app",
-      "https://find-my-song-frontend.vercel.app",
+      "http://localhost:4173",
       "https://findmysong-frontend.vercel.app",
+      "https://find-my-song-frontend.vercel.app",
+      "https://find-my-song.vercel.app",
+      "https://findmysong.vercel.app",
     ],
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
   })
 );
 
