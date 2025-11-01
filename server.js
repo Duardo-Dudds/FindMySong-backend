@@ -19,7 +19,7 @@ const { Pool } = require("pg");
 const app = express();
 
 // ===============================
-// CORS – apenas domínios autorizados
+// CORS – libera seus fronts
 // ===============================
 app.use(
   cors({
@@ -29,34 +29,32 @@ app.use(
       "https://findmysong-frontend.vercel.app",
       "https://find-my-song-frontend.vercel.app",
       "https://find-my-song.vercel.app",
-      "https://findmysong.vercel.app",
+      "https://findmysong.vercel.app"
     ],
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
-// ===============================
-// Configuração base
-// ===============================
+// aceita JSON
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Log básico das requisições
+// log de TODA requisição que CHEGAR no Express
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
 // ===============================
-// Banco de Dados (Render PostgreSQL)
+// Banco (Render Postgres)
 // ===============================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { require: true, rejectUnauthorized: false },
 });
 
-// Teste de saúde do servidor
+// health
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -67,10 +65,10 @@ app.get("/health", async (req, res) => {
 });
 
 // ===============================
-// Autenticação (cadastro / login)
+// Auth (cadastro / login)
 // ===============================
 
-// POST /api/usuarios/register – cria novo usuário
+// POST /api/usuarios/register
 app.post("/api/usuarios/register", async (req, res) => {
   const { nome, email, senha } = req.body;
 
@@ -95,7 +93,7 @@ app.post("/api/usuarios/register", async (req, res) => {
   }
 });
 
-// POST /api/usuarios/login – autenticação de usuário
+// POST /api/usuarios/login
 app.post("/api/usuarios/login", async (req, res) => {
   const { email, senha } = req.body;
 
@@ -137,7 +135,7 @@ app.post("/api/usuarios/login", async (req, res) => {
   }
 });
 
-// GET /api/usuarios/me – rota protegida
+// GET /api/usuarios/me
 app.get("/api/usuarios/me", async (req, res) => {
   try {
     const auth = req.headers.authorization || "";
@@ -156,7 +154,7 @@ app.get("/api/usuarios/me", async (req, res) => {
 });
 
 // ===============================
-// Spotify API – token com cache
+// Spotify – com cache (NO BACKEND)
 // ===============================
 let cachedSpotifyToken = null;
 let spotifyExpiresAt = 0;
@@ -171,6 +169,7 @@ async function getSpotifyToken() {
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
+    console.error("[SPOTIFY] Credenciais não configuradas");
     throw new Error("SPOTIFY_CLIENT_ID / SECRET não configurados");
   }
 
@@ -190,6 +189,7 @@ async function getSpotifyToken() {
   );
 
   if (!resp.data?.access_token) {
+    console.error("[SPOTIFY] resposta ruim:", resp.data);
     throw new Error("Spotify não devolveu token");
   }
 
@@ -200,8 +200,31 @@ async function getSpotifyToken() {
   return cachedSpotifyToken;
 }
 
+// GET /api/spotify/search?q=...
+app.get("/api/spotify/search", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    if (!q) {
+      return res.status(400).json({ message: "Parâmetro q é obrigatório." });
+    }
+
+    const token = await getSpotifyToken();
+
+    const r = await axios.get("https://api.spotify.com/v1/search", {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { q, type: "track", limit: 20 },
+      timeout: 8000,
+    });
+
+    return res.json(r.data.tracks.items);
+  } catch (err) {
+    console.error("[SPOTIFY] Erro na busca:", err.response?.data || err.message);
+    return res.status(500).json({ message: "Erro na busca Spotify." });
+  }
+});
+
 // ===============================
-// Busca aprimorada (Spotify base + Genius)
+// Genius + Spotify – busca por letra
 // ===============================
 const GENIUS_ACCESS_TOKEN = process.env.GENIUS_ACCESS_TOKEN;
 const GENIUS_BASE_URL = "https://api.genius.com";
@@ -210,60 +233,80 @@ app.get("/api/search-lyrics", async (req, res) => {
   const q = String(req.query.q || "").trim();
 
   if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório." });
+  if (!GENIUS_ACCESS_TOKEN)
+    return res.status(500).json({ message: "Chave do Genius não configurada." });
 
   try {
-    // 1) Busca principal: Spotify
-    const spToken = await getSpotifyToken();
-    const spResp = await axios.get("https://api.spotify.com/v1/search", {
-      headers: { Authorization: `Bearer ${spToken}` },
-      params: { q, type: "track", limit: 30 },
+    const geniusResp = await axios.get(`${GENIUS_BASE_URL}/search`, {
+      params: { q: `${q} lyrics song` },
+      headers: { Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}` },
       timeout: 9000,
     });
 
-    const tracks = spResp.data.tracks.items || [];
+    const allHits = geniusResp.data.response?.hits || [];
+
+    const hits = allHits
+      .filter((h) => {
+        const title = h.result.title.toLowerCase();
+        const artist = h.result.primary_artist?.name?.toLowerCase() || "";
+        const search = q.toLowerCase();
+        return title.includes(search) || artist.includes(search);
+      })
+      .slice(0, 25);
+
     const results = [];
 
-    // 2) Complementa com Genius (apenas link da letra)
-    for (const track of tracks) {
-      const title = track.name;
-      const artist = track.artists[0]?.name || "";
-      const image = track.album.images[0]?.url || null;
-      const spotifyUrl = track.external_urls.spotify;
-      const preview = track.preview_url;
+    for (const hit of hits) {
+      const song = hit.result;
+      const title = song.title;
+      const artist = song.primary_artist?.name;
+      const geniusUrl = song.url;
 
-      let geniusUrl = null;
-      try {
-        if (GENIUS_ACCESS_TOKEN) {
-          const geniusResp = await axios.get(`${GENIUS_BASE_URL}/search`, {
-            params: { q: `${title} ${artist}` },
-            headers: { Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}` },
-            timeout: 5000,
-          });
-          geniusUrl = geniusResp.data.response.hits[0]?.result?.url || null;
-        }
-      } catch {
-        geniusUrl = null;
-      }
-
-      results.push({
+      const base = {
         title,
         artist,
-        image,
-        spotify_url: spotifyUrl,
-        preview_url: preview,
         genius_url: geniusUrl,
-      });
+        spotify_url: null,
+        preview_url: null,
+        image: song.song_art_image_url || null,
+      };
+
+      try {
+        const spToken = await getSpotifyToken();
+        const spResp = await axios.get("https://api.spotify.com/v1/search", {
+          headers: { Authorization: `Bearer ${spToken}` },
+          params: {
+            q: `${title} ${artist}`.replace(/[()]/g, ""),
+            type: "track",
+            limit: 5,
+          },
+          timeout: 8000,
+        });
+
+        const track =
+          spResp.data.tracks.items.find((t) => {
+            const name = t.name.toLowerCase();
+            const arts = t.artists.map((a) => a.name.toLowerCase()).join(" ");
+            const s = q.toLowerCase();
+            return name.includes(s) || arts.includes(s);
+          }) || spResp.data.tracks.items[0];
+
+        results.push({
+          ...base,
+          spotify_url: track?.external_urls?.spotify || null,
+          preview_url: track?.preview_url || null,
+          image: track?.album?.images?.[0]?.url || base.image,
+        });
+      } catch (err) {
+        console.warn("[GENIUS->SPOTIFY] Falhou pra", title, err.message);
+        results.push(base);
+      }
     }
 
-    // Remove duplicados e envia
-    const unique = results.filter(
-      (v, i, a) => a.findIndex((t) => t.title === v.title) === i
-    );
-
-    return res.json(unique);
+    return res.json(results);
   } catch (err) {
-    console.error("[BUSCA] Erro:", err.response?.data || err.message);
-    return res.status(500).json({ message: "Erro na busca." });
+    console.error("[GENIUS] erro search-lyrics:", err.response?.data || err.message);
+    return res.status(200).json([]);
   }
 });
 
@@ -272,6 +315,18 @@ app.get("/api/search-lyrics", async (req, res) => {
 // ===============================
 app.get("/", (req, res) => {
   res.send("FindMySong backend rodando 🎵");
+});
+
+// ===============================
+// 404 GLOBAL – IMPORTANTE
+// ===============================
+app.all("*", (req, res) => {
+  console.warn("[404] Rota não encontrada:", req.method, req.url);
+  return res.status(404).json({
+    message: "Rota não encontrada no backend",
+    method: req.method,
+    path: req.url,
+  });
 });
 
 // ===============================
