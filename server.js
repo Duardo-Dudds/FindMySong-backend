@@ -221,12 +221,11 @@ app.get("/api/spotify/search", async (req, res) => {
 });
 
 // ===============================
-// Genius + Spotify – busca por letra otimizada
+// Genius + Spotify – busca por letra otimizada com filtro de relevância
 // ===============================
 const GENIUS_ACCESS_TOKEN = process.env.GENIUS_ACCESS_TOKEN;
 const GENIUS_BASE_URL = "https://api.genius.com";
 
-// GET /api/search-lyrics?q=...
 app.get("/api/search-lyrics", async (req, res) => {
   const q = String(req.query.q || "").trim();
 
@@ -235,30 +234,43 @@ app.get("/api/search-lyrics", async (req, res) => {
     return res.status(500).json({ message: "Chave do Genius não configurada." });
 
   try {
-    // Busca inicial no Genius
+    // Busca no Genius — força o termo de letra e aumenta o limite
     const geniusResp = await axios.get(`${GENIUS_BASE_URL}/search`, {
-      params: { q: `${q} lyrics` },
+      params: { q: `${q} lyrics song` },
       headers: { Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}` },
-      timeout: 8000,
+      timeout: 9000,
     });
 
-    // Aumenta número de resultados e melhora relevância
-    const hits = (geniusResp.data.response?.hits || []).slice(0, 15);
+    const allHits = geniusResp.data.response?.hits || [];
+
+    // Filtra resultados que realmente contêm o termo no título ou artista
+    const hits = allHits
+      .filter((h) => {
+        const title = h.result.title.toLowerCase();
+        const artist = h.result.primary_artist?.name?.toLowerCase() || "";
+        const search = q.toLowerCase();
+        return title.includes(search) || artist.includes(search);
+      })
+      .slice(0, 25);
+
     const results = [];
 
-    // Para cada música do Genius, tenta casar com dados do Spotify
+    // Se a busca estiver em português, tenta dar prioridade a faixas com título PT
+    const isPortuguese = /[áàãâéêíóôõúç]/i.test(q);
+
     for (const hit of hits) {
       const song = hit.result;
       const title = song.title;
       const artist = song.primary_artist?.name;
+      const geniusUrl = song.url;
 
       const base = {
         title,
         artist,
-        genius_url: song.url,
+        genius_url: geniusUrl,
         spotify_url: null,
         preview_url: null,
-        image: null,
+        image: song.song_art_image_url || null,
       };
 
       try {
@@ -268,18 +280,31 @@ app.get("/api/search-lyrics", async (req, res) => {
           params: {
             q: `${title} ${artist}`.replace(/[()]/g, ""),
             type: "track",
-            limit: 3,
+            limit: 5,
           },
-          timeout: 7000,
+          timeout: 8000,
         });
 
-        const track = spResp.data.tracks.items[0];
+        // Pega o primeiro resultado com correspondência mais próxima
+        const track = spResp.data.tracks.items.find((t) => {
+          const name = t.name.toLowerCase();
+          const art = t.artists.map((a) => a.name.toLowerCase()).join(" ");
+          const s = q.toLowerCase();
+          return name.includes(s) || art.includes(s);
+        }) || spResp.data.tracks.items[0];
+
+        // Se a busca for em PT, prioriza nomes PT
+        if (isPortuguese && track?.name) {
+          if (!/[áàãâéêíóôõúç]/i.test(track.name) && Math.random() > 0.4) {
+            continue;
+          }
+        }
 
         results.push({
           ...base,
           spotify_url: track?.external_urls?.spotify || null,
           preview_url: track?.preview_url || null,
-          image: track?.album?.images?.[0]?.url || null,
+          image: track?.album?.images?.[0]?.url || base.image,
         });
       } catch (err) {
         console.warn("[GENIUS->SPOTIFY] Falhou pra", title, err.message);
@@ -287,7 +312,12 @@ app.get("/api/search-lyrics", async (req, res) => {
       }
     }
 
-    return res.json(results);
+    // Remove duplicadas pelo título
+    const unique = results.filter(
+      (v, i, a) => a.findIndex((t) => t.title === v.title) === i
+    );
+
+    return res.json(unique);
   } catch (err) {
     console.error("[GENIUS] erro search-lyrics:", err.response?.data || err.message);
     return res.status(200).json([]);
