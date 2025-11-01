@@ -199,29 +199,8 @@ async function getSpotifyToken() {
   return cachedSpotifyToken;
 }
 
-// GET /api/spotify/search?q=...
-app.get("/api/spotify/search", async (req, res) => {
-  try {
-    const q = String(req.query.q || "").trim();
-    if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório." });
-
-    const token = await getSpotifyToken();
-
-    const r = await axios.get("https://api.spotify.com/v1/search", {
-      headers: { Authorization: `Bearer ${token}` },
-      params: { q, type: "track", limit: 20 },
-      timeout: 8000,
-    });
-
-    return res.json(r.data.tracks.items);
-  } catch (err) {
-    console.error("[SPOTIFY] Erro na busca:", err.response?.data || err.message);
-    return res.status(500).json({ message: "Erro na busca Spotify." });
-  }
-});
-
 // ===============================
-// Genius + Spotify – busca por letra otimizada com filtro de relevância
+// Busca aprimorada (Spotify base + Genius)
 // ===============================
 const GENIUS_ACCESS_TOKEN = process.env.GENIUS_ACCESS_TOKEN;
 const GENIUS_BASE_URL = "https://api.genius.com";
@@ -230,97 +209,60 @@ app.get("/api/search-lyrics", async (req, res) => {
   const q = String(req.query.q || "").trim();
 
   if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório." });
-  if (!GENIUS_ACCESS_TOKEN)
-    return res.status(500).json({ message: "Chave do Genius não configurada." });
 
   try {
-    // Busca no Genius — força o termo de letra e aumenta o limite
-    const geniusResp = await axios.get(`${GENIUS_BASE_URL}/search`, {
-      params: { q: `${q} lyrics song` },
-      headers: { Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}` },
+    // 1) Busca principal: Spotify
+    const spToken = await getSpotifyToken();
+    const spResp = await axios.get("https://api.spotify.com/v1/search", {
+      headers: { Authorization: `Bearer ${spToken}` },
+      params: { q, type: "track", limit: 30 },
       timeout: 9000,
     });
 
-    const allHits = geniusResp.data.response?.hits || [];
-
-    // Filtra resultados que realmente contêm o termo no título ou artista
-    const hits = allHits
-      .filter((h) => {
-        const title = h.result.title.toLowerCase();
-        const artist = h.result.primary_artist?.name?.toLowerCase() || "";
-        const search = q.toLowerCase();
-        return title.includes(search) || artist.includes(search);
-      })
-      .slice(0, 25);
-
+    const tracks = spResp.data.tracks.items || [];
     const results = [];
 
-    // Se a busca estiver em português, tenta dar prioridade a faixas com título PT
-    const isPortuguese = /[áàãâéêíóôõúç]/i.test(q);
+    // 2) Complementa com Genius (apenas link da letra)
+    for (const track of tracks) {
+      const title = track.name;
+      const artist = track.artists[0]?.name || "";
+      const image = track.album.images[0]?.url || null;
+      const spotifyUrl = track.external_urls.spotify;
+      const preview = track.preview_url;
 
-    for (const hit of hits) {
-      const song = hit.result;
-      const title = song.title;
-      const artist = song.primary_artist?.name;
-      const geniusUrl = song.url;
+      let geniusUrl = null;
+      try {
+        if (GENIUS_ACCESS_TOKEN) {
+          const geniusResp = await axios.get(`${GENIUS_BASE_URL}/search`, {
+            params: { q: `${title} ${artist}` },
+            headers: { Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}` },
+            timeout: 5000,
+          });
+          geniusUrl = geniusResp.data.response.hits[0]?.result?.url || null;
+        }
+      } catch {
+        geniusUrl = null;
+      }
 
-      const base = {
+      results.push({
         title,
         artist,
+        image,
+        spotify_url: spotifyUrl,
+        preview_url: preview,
         genius_url: geniusUrl,
-        spotify_url: null,
-        preview_url: null,
-        image: song.song_art_image_url || null,
-      };
-
-      try {
-        const spToken = await getSpotifyToken();
-        const spResp = await axios.get("https://api.spotify.com/v1/search", {
-          headers: { Authorization: `Bearer ${spToken}` },
-          params: {
-            q: `${title} ${artist}`.replace(/[()]/g, ""),
-            type: "track",
-            limit: 5,
-          },
-          timeout: 8000,
-        });
-
-        // Pega o primeiro resultado com correspondência mais próxima
-        const track = spResp.data.tracks.items.find((t) => {
-          const name = t.name.toLowerCase();
-          const art = t.artists.map((a) => a.name.toLowerCase()).join(" ");
-          const s = q.toLowerCase();
-          return name.includes(s) || art.includes(s);
-        }) || spResp.data.tracks.items[0];
-
-        // Se a busca for em PT, prioriza nomes PT
-        if (isPortuguese && track?.name) {
-          if (!/[áàãâéêíóôõúç]/i.test(track.name) && Math.random() > 0.4) {
-            continue;
-          }
-        }
-
-        results.push({
-          ...base,
-          spotify_url: track?.external_urls?.spotify || null,
-          preview_url: track?.preview_url || null,
-          image: track?.album?.images?.[0]?.url || base.image,
-        });
-      } catch (err) {
-        console.warn("[GENIUS->SPOTIFY] Falhou pra", title, err.message);
-        results.push(base);
-      }
+      });
     }
 
-    // Remove duplicadas pelo título
+    // Remove duplicados e envia
     const unique = results.filter(
       (v, i, a) => a.findIndex((t) => t.title === v.title) === i
     );
 
     return res.json(unique);
   } catch (err) {
-    console.error("[GENIUS] erro search-lyrics:", err.response?.data || err.message);
-    return res.status(200).json([]);
+    console.error("[BUSCA] Erro:", err.response?.data || err.message);
+    return res.status(500).json({ message: "Erro na busca." });
   }
 });
 
