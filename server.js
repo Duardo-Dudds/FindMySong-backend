@@ -281,41 +281,21 @@ app.get("/api/spotify/top10", async (req, res) => {
 // ===============================
 // Likes (Curtidas)
 // ===============================
-app.get("/api/likes/:usuario_id", async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT * FROM eduardo.curtidas WHERE usuario_id = $1 ORDER BY id DESC`,
-      [req.params.usuario_id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ message: "Erro ao listar curtidas." });
-  }
-});
 
 app.post("/api/likes", async (req, res) => {
+  const { usuario_id, spotify_id, titulo, artista, imagem, url } = req.body;
+
   try {
-    const { usuario_id, spotify_id, titulo, artista, imagem, url } = req.body;
     await pool.query(
-      `INSERT INTO eduardo.curtidas (usuario_id, spotify_id, titulo, artista, imagem, url)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
+      `INSERT INTO curtidas (usuario_id, spotify_id, titulo, artista, imagem, url)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT DO NOTHING`,
       [usuario_id, spotify_id, titulo, artista, imagem, url]
     );
-    res.json({ message: "Música curtida com sucesso!" });
-  } catch {
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[LIKES][INSERT] erro:", e);
     res.status(500).json({ message: "Erro ao curtir música." });
-  }
-});
-
-app.delete("/api/likes/:spotify_id/:usuario_id", async (req, res) => {
-  try {
-    await pool.query(
-      `DELETE FROM eduardo.curtidas WHERE spotify_id = $1 AND usuario_id = $2`,
-      [req.params.spotify_id, req.params.usuario_id]
-    );
-    res.json({ message: "Curtida removida!" });
-  } catch {
-    res.status(500).json({ message: "Erro ao remover curtida." });
   }
 });
 
@@ -358,6 +338,32 @@ app.delete("/api/library/:spotify_id/:usuario_id", async (req, res) => {
   } catch {
     res.status(500).json({ message: "Erro ao remover música." });
   }
+});
+
+// GET músicas da biblioteca
+app.get("/api/library/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const r = await pool.query("SELECT * FROM biblioteca WHERE usuario_id = $1", [userId]);
+  res.json(r.rows);
+});
+
+// POST adicionar música
+app.post("/api/library", async (req, res) => {
+  const { usuario_id, spotify_id, titulo, artista, imagem, url } = req.body;
+  await pool.query(
+    `INSERT INTO biblioteca (usuario_id, spotify_id, titulo, artista, imagem, url)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT DO NOTHING`,
+    [usuario_id, spotify_id, titulo, artista, imagem, url]
+  );
+  res.json({ ok: true });
+});
+
+// GET playlists do usuário
+app.get("/api/playlists/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const r = await pool.query("SELECT * FROM playlists WHERE usuario_id = $1", [userId]);
+  res.json(r.rows);
 });
 
 // ===============================
