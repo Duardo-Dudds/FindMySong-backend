@@ -39,7 +39,7 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Log de todas as requisições
+// Log de requisições
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
@@ -190,69 +190,6 @@ app.get("/api/spotify/search", async (req, res) => {
 });
 
 // ===============================
-// Genius + Spotify – busca por letra
-// ===============================
-const GENIUS_ACCESS_TOKEN = process.env.GENIUS_ACCESS_TOKEN;
-const GENIUS_BASE_URL = "https://api.genius.com";
-
-app.get("/api/search-lyrics", async (req, res) => {
-  const q = String(req.query.q || "").trim();
-  if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório." });
-  if (!GENIUS_ACCESS_TOKEN)
-    return res.status(500).json({ message: "Chave do Genius não configurada." });
-
-  try {
-    const geniusResp = await axios.get(`${GENIUS_BASE_URL}/search`, {
-      params: { q: `${q} lyrics song` },
-      headers: { Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}` },
-      timeout: 9000,
-    });
-
-    const hits = geniusResp.data.response?.hits?.slice(0, 25) || [];
-    const results = [];
-
-    for (const hit of hits) {
-      const song = hit.result;
-      const title = song.title;
-      const artist = song.primary_artist?.name;
-      const geniusUrl = song.url;
-
-      const base = {
-        title,
-        artist,
-        genius_url: geniusUrl,
-        spotify_url: null,
-        preview_url: null,
-        image: song.song_art_image_url || null,
-      };
-
-      try {
-        const spToken = await getSpotifyToken();
-        const spResp = await axios.get("https://api.spotify.com/v1/search", {
-          headers: { Authorization: `Bearer ${spToken}` },
-          params: { q: `${title} ${artist}`, type: "track", limit: 5 },
-        });
-
-        const track = spResp.data.tracks.items[0];
-        results.push({
-          ...base,
-          spotify_url: track?.external_urls?.spotify || null,
-          preview_url: track?.preview_url || null,
-          image: track?.album?.images?.[0]?.url || base.image,
-        });
-      } catch {
-        results.push(base);
-      }
-    }
-
-    return res.json(results);
-  } catch (err) {
-    console.error("[GENIUS] erro search-lyrics:", err.message);
-    return res.status(200).json([]);
-  }
-});
-
-// ===============================
 // Spotify – Top 10
 // ===============================
 app.get("/api/spotify/top10", async (req, res) => {
@@ -279,47 +216,75 @@ app.get("/api/spotify/top10", async (req, res) => {
 });
 
 // ===============================
-// Likes (Curtidas)
+// Curtidas (Likes)
 // ===============================
+app.get("/api/likes/:userId", async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const result = await pool.query(
+      "SELECT * FROM curtidas WHERE usuario_id = $1 ORDER BY id DESC",
+      [userId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error("[LIKES][GET] erro:", e);
+    res.status(500).json({ message: "Erro ao buscar curtidas." });
+  }
+});
 
 app.post("/api/likes", async (req, res) => {
   const { usuario_id, spotify_id, titulo, artista, imagem, url } = req.body;
-
   try {
     await pool.query(
       `INSERT INTO curtidas (usuario_id, spotify_id, titulo, artista, imagem, url)
        VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT (usuario_id, spotify_id) DO NOTHING`,
       [usuario_id, spotify_id, titulo, artista, imagem, url]
     );
-    res.json({ ok: true });
+    res.json({ message: "Música curtida com sucesso!" });
   } catch (e) {
     console.error("[LIKES][INSERT] erro:", e);
     res.status(500).json({ message: "Erro ao curtir música." });
   }
 });
 
+app.delete("/api/likes/:spotifyId/:userId", async (req, res) => {
+  const { spotifyId, userId } = req.params;
+  try {
+    await pool.query(
+      "DELETE FROM curtidas WHERE usuario_id = $1 AND spotify_id = $2",
+      [userId, spotifyId]
+    );
+    res.json({ message: "Música removida das curtidas!" });
+  } catch (e) {
+    console.error("[LIKES][DELETE] erro:", e);
+    res.status(500).json({ message: "Erro ao remover curtida." });
+  }
+});
+
 // ===============================
 // Biblioteca
 // ===============================
-app.get("/api/library/:usuario_id", async (req, res) => {
+app.get("/api/library/:userId", async (req, res) => {
+  const { userId } = req.params;
   try {
-    const result = await pool.query(
-      `SELECT * FROM eduardo.biblioteca WHERE usuario_id = $1 ORDER BY id DESC`,
-      [req.params.usuario_id]
+    const r = await pool.query(
+      "SELECT * FROM biblioteca WHERE usuario_id = $1 ORDER BY id DESC",
+      [userId]
     );
-    res.json(result.rows);
+    res.json(r.rows);
   } catch {
     res.status(500).json({ message: "Erro ao listar biblioteca." });
   }
 });
 
 app.post("/api/library", async (req, res) => {
+  const { usuario_id, spotify_id, titulo, artista, imagem, url } = req.body;
   try {
-    const { usuario_id, spotify_id, titulo, artista, imagem, url } = req.body;
     await pool.query(
-      `INSERT INTO eduardo.biblioteca (usuario_id, spotify_id, titulo, artista, imagem, url)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
+      `INSERT INTO biblioteca (usuario_id, spotify_id, titulo, artista, imagem, url)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (usuario_id, spotify_id) DO NOTHING`,
       [usuario_id, spotify_id, titulo, artista, imagem, url]
     );
     res.json({ message: "Música adicionada à biblioteca!" });
@@ -328,11 +293,12 @@ app.post("/api/library", async (req, res) => {
   }
 });
 
-app.delete("/api/library/:spotify_id/:usuario_id", async (req, res) => {
+app.delete("/api/library/:spotifyId/:userId", async (req, res) => {
+  const { spotifyId, userId } = req.params;
   try {
     await pool.query(
-      `DELETE FROM eduardo.biblioteca WHERE spotify_id = $1 AND usuario_id = $2`,
-      [req.params.spotify_id, req.params.usuario_id]
+      "DELETE FROM biblioteca WHERE spotify_id = $1 AND usuario_id = $2",
+      [spotifyId, userId]
     );
     res.json({ message: "Música removida da biblioteca!" });
   } catch {
@@ -340,30 +306,20 @@ app.delete("/api/library/:spotify_id/:usuario_id", async (req, res) => {
   }
 });
 
-// GET músicas da biblioteca
-app.get("/api/library/:userId", async (req, res) => {
-  const { userId } = req.params;
-  const r = await pool.query("SELECT * FROM biblioteca WHERE usuario_id = $1", [userId]);
-  res.json(r.rows);
-});
-
-// POST adicionar música
-app.post("/api/library", async (req, res) => {
-  const { usuario_id, spotify_id, titulo, artista, imagem, url } = req.body;
-  await pool.query(
-    `INSERT INTO biblioteca (usuario_id, spotify_id, titulo, artista, imagem, url)
-     VALUES ($1,$2,$3,$4,$5,$6)
-     ON CONFLICT DO NOTHING`,
-    [usuario_id, spotify_id, titulo, artista, imagem, url]
-  );
-  res.json({ ok: true });
-});
-
-// GET playlists do usuário
+// ===============================
+// Playlists
+// ===============================
 app.get("/api/playlists/:userId", async (req, res) => {
   const { userId } = req.params;
-  const r = await pool.query("SELECT * FROM playlists WHERE usuario_id = $1", [userId]);
-  res.json(r.rows);
+  try {
+    const r = await pool.query(
+      "SELECT * FROM playlists WHERE usuario_id = $1 ORDER BY id DESC",
+      [userId]
+    );
+    res.json(r.rows);
+  } catch {
+    res.status(500).json({ message: "Erro ao buscar playlists." });
+  }
 });
 
 // ===============================
