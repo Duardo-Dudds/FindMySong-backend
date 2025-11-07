@@ -346,6 +346,41 @@ app.post("/api/admin/config", async (req, res) => {
     res.status(500).json({ message: "Erro ao salvar configurações." });
   }
 });
+
+// ===============================
+// Perfil do Usuário
+// ===============================
+app.get("/api/usuarios/profile/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      "SELECT id, nome, email, avatar_url FROM usuarios WHERE id = $1",
+      [id]
+    );
+    if (result.rows.length === 0)
+      return res.status(404).json({ message: "Usuário não encontrado." });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("[GET PROFILE ERROR]", err);
+    res.status(500).json({ message: "Erro ao carregar perfil." });
+  }
+});
+
+app.post("/api/usuarios/profile/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nome, avatar_url } = req.body;
+    await pool.query(
+      "UPDATE usuarios SET nome = $1, avatar_url = $2 WHERE id = $3",
+      [nome, avatar_url, id]
+    );
+    res.json({ ok: true, message: "Perfil atualizado com sucesso!" });
+  } catch (err) {
+    console.error("[UPDATE PROFILE ERROR]", err);
+    res.status(500).json({ message: "Erro ao atualizar perfil." });
+  }
+});
+
 // ===============================
 // ADMIN – Configurações e Temas
 // ===============================
