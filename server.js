@@ -346,7 +346,61 @@ app.post("/api/admin/config", async (req, res) => {
     res.status(500).json({ message: "Erro ao salvar configurações." });
   }
 });
+// ===============================
+// ADMIN – Configurações e Temas
+// ===============================
 
+// Retorna as configurações atuais
+app.get("/api/admin/config", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT site_name, theme, items_per_page, language FROM configuracoes ORDER BY updated_at DESC LIMIT 1"
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        site_name: "FindMySong",
+        theme: "light",
+        items_per_page: 20,
+        language: "pt-BR",
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("[ADMIN CONFIG GET ERROR]", err);
+    res.status(500).json({ message: "Erro ao buscar configurações." });
+  }
+});
+
+// Salva/atualiza configurações
+app.post("/api/admin/config", async (req, res) => {
+  try {
+    const data = req.body;
+
+    await pool.query(
+      `INSERT INTO configuracoes (site_name, theme, items_per_page, language, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (id) DO UPDATE
+       SET site_name = $1,
+           theme = $2,
+           items_per_page = $3,
+           language = $4,
+           updated_at = NOW();`,
+      [
+        data.site_name || "FindMySong",
+        data.theme || "light",
+        data.items_per_page || 20,
+        data.language || "pt-BR",
+      ]
+    );
+
+    res.json({ ok: true, message: "Configurações salvas com sucesso!" });
+  } catch (err) {
+    console.error("[ADMIN CONFIG POST ERROR]", err);
+    res.status(500).json({ message: "Erro ao salvar configurações." });
+  }
+});
 
 // ===============================
 // Rotas padrão
