@@ -1,0 +1,38 @@
+import express from "express";
+import pool from "../db.js"; // conexão com o PostgreSQL
+
+const router = express.Router();
+
+// Salva feedback
+router.post("/", async (req, res) => {
+  const { query, nota, comentario } = req.body;
+
+  if (!query || !nota) {
+    return res.status(400).json({ error: "Campos obrigatórios faltando" });
+  }
+
+  try {
+    await pool.query(
+      "INSERT INTO feedbacks (query, nota, comentario, data_envio) VALUES ($1, $2, $3, NOW())",
+      [query, nota, comentario || ""]
+    );
+    res.status(201).json({ message: "Feedback salvo com sucesso" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erro ao salvar feedback" });
+  }
+});
+
+// Lista feedbacks
+router.get("/", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, query, nota, comentario, data_envio FROM feedbacks ORDER BY data_envio DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Erro ao carregar feedbacks" });
+  }
+});
+
+export default router;

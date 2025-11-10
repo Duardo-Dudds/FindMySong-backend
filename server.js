@@ -65,6 +65,44 @@ app.get("/health", async (req, res) => {
   }
 });
 
+// =======================================================
+// FEEDBACKS – Coleta e Relatórios
+// =======================================================
+app.post("/api/feedback", async (req, res) => {
+  const { query, nota, comentario } = req.body;
+
+  if (!query || !nota) {
+    return res.status(400).json({ message: "Preencha os campos obrigatórios." });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO feedbacks (query, nota, comentario, data_envio)
+       VALUES ($1, $2, $3, NOW())`,
+      [query, nota, comentario || ""]
+    );
+
+    res.status(201).json({ message: "Feedback enviado com sucesso!" });
+  } catch (err) {
+    console.error("[FEEDBACK][INSERT] erro:", err);
+    res.status(500).json({ message: "Erro ao salvar feedback." });
+  }
+});
+
+app.get("/api/feedback", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, query, nota, comentario, data_envio FROM feedbacks ORDER BY data_envio DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("[FEEDBACK][GET] erro:", err);
+    res.status(500).json({ message: "Erro ao carregar feedbacks." });
+  }
+});
+// =======================================================
+
+
 // ===============================
 // Auth (cadastro / login)
 // ===============================
