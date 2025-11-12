@@ -216,7 +216,7 @@ app.get("/api/spotify/search", async (req, res) => {
 
     const r = await axios.get("https://api.spotify.com/v1/search", {
       headers: { Authorization: `Bearer ${token}` },
-      params: { q, type: "track", limit: 20 },
+      params: { q, type: "track", limit: 20, market: "BR" },
       timeout: 8000,
     });
 
