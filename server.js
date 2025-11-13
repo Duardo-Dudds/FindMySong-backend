@@ -363,31 +363,6 @@ app.get("/api/playlists/:userId", async (req, res) => {
 });
 
 // ===============================
-// Rota para salvar configs
-// ===============================
-
-app.post("/api/admin/config", async (req, res) => {
-  try {
-    const data = req.body;
-    await pool.query(
-      `INSERT INTO configuracoes (site_name, theme, items_per_page, language, updated_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         site_name = $1,
-         theme = $2,
-         items_per_page = $3,
-         language = $4,
-         updated_at = NOW()`,
-      [data.site_name, data.theme, data.items_per_page, data.language]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("[ADMIN CONFIG ERROR]", err);
-    res.status(500).json({ message: "Erro ao salvar configurações." });
-  }
-});
-
-// ===============================
 // Perfil do Usuário
 // ===============================
 app.get("/api/usuarios/profile/:id", async (req, res) => {
@@ -485,7 +460,7 @@ app.get("/", (req, res) => res.send("FindMySong backend rodando 🎵"));
 app.all("*", (req, res) => {
   console.warn("[404] Rota não encontrada:", req.method, req.url);
   return res
-    .status(404)
+    .status(404) 
     .json({ message: "Rota não encontrada no backend", path: req.url });
 });
 
@@ -494,5 +469,3 @@ app.all("*", (req, res) => {
 // ===============================
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`🚀 Servidor rodando na porta ${port}`));
-
-
