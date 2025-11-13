@@ -211,12 +211,14 @@ async function getSpotifyToken() {
 app.get("/api/spotify/search", async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
+    const market = String(req.query.market || "BR").trim(); 
+
     if (!q) return res.status(400).json({ message: "Parâmetro q é obrigatório." });
     const token = await getSpotifyToken();
 
     const r = await axios.get("https://api.spotify.com/v1/search", {
       headers: { Authorization: `Bearer ${token}` },
-      params: { q, type: "track", limit: 20, market: "BR" },
+      params: { q, type: "track", limit: 20, market: market }, 
       timeout: 8000,
     });
 
