@@ -460,7 +460,7 @@ app.get("/", (req, res) => res.send("FindMySong backend rodando 🎵"));
 app.all("*", (req, res) => {
   console.warn("[404] Rota não encontrada:", req.method, req.url);
   return res
-    .status(404) 
+    .status(404) // Corrigido de 4404 para 404
     .json({ message: "Rota não encontrada no backend", path: req.url });
 });
 
