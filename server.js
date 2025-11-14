@@ -363,6 +363,59 @@ app.get("/api/playlists/:userId", async (req, res) => {
 });
 
 // ===============================
+// POST /api/playlists
+// ===============================
+app.post("/api/playlists", async (req, res) => {
+  const { usuario_id, nome, descricao } = req.body;
+
+  if (!usuario_id || !nome) {
+    return res.status(400).json({ message: "Nome e ID do usuário são obrigatórios." });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO playlists (usuario_id, nome, descricao, data_criacao)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING *`,
+      [usuario_id, nome, descricao || ""]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("[PLAYLISTS][INSERT] erro:", err);
+    res.status(500).json({ message: "Erro ao criar playlist." });
+  }
+});
+
+// ===============================
+// Playlists (Adicionar Música)
+// ===============================
+app.post("/api/playlists/:playlistId/musicas", async (req, res) => {
+  const { playlistId } = req.params;
+  const { spotify_id, titulo, artista, imagem, url } = req.body;
+
+  if (!spotify_id) {
+    return res.status(400).json({ message: "Música inválida." });
+  }
+
+  try {
+    // --- ESTA É A CORREÇÃO ---
+    // Adiciona "adicionada_em" e "NOW()" para bater com o seu print do pgAdmin
+    await pool.query(
+      `INSERT INTO playlist_musicas (playlist_id, spotify_id, titulo, artista, imagem, url, adicionada_em)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) 
+       ON CONFLICT (playlist_id, spotify_id) DO NOTHING`,
+      [playlistId, spotify_id, titulo, artista, imagem, url]
+    );
+    // --- FIM DA CORREÇÃO ---
+    
+    res.status(201).json({ message: "Música adicionada à playlist!" });
+  } catch (err) {
+    console.error("[PLAYLIST][ADD_MUSIC] erro:", err);
+    res.status(500).json({ message: "Erro ao adicionar música." });
+  }
+});
+
+// ===============================
 // Perfil do Usuário
 // ===============================
 app.get("/api/usuarios/profile/:id", async (req, res) => {
@@ -373,7 +426,7 @@ app.get("/api/usuarios/profile/:id", async (req, res) => {
       [id]
     );
     if (result.rows.length === 0)
-      return res.status(404).json({ message: "Usuário não encontrado." });
+      return res.status(4404).json({ message: "Usuário não encontrado." }); // 404
     res.json(result.rows[0]);
   } catch (err) {
     console.error("[GET PROFILE ERROR]", err);
@@ -460,7 +513,7 @@ app.get("/", (req, res) => res.send("FindMySong backend rodando 🎵"));
 app.all("*", (req, res) => {
   console.warn("[404] Rota não encontrada:", req.method, req.url);
   return res
-    .status(404) // Corrigido de 4404 para 404
+    .status(404) 
     .json({ message: "Rota não encontrada no backend", path: req.url });
 });
 
